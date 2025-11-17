@@ -16,6 +16,7 @@ class VoximplantService:
         """Initialize Voximplant API client"""
         self.account_id = os.getenv("VOXIMPLANT_ACCOUNT_ID")
         self.api_key = os.getenv("VOXIMPLANT_API_KEY")
+        self.caller_id = os.getenv("VOXIMPLANT_CALLER_ID")
 
         if not self.account_id or not self.api_key:
             raise ValueError("Voximplant credentials not configured in environment variables")
@@ -63,11 +64,17 @@ class VoximplantService:
         try:
             # Start the scenario
             # Note: Adjust parameters based on your Voximplant setup
-            result = self.api.start_scenarios(
-                rule_id=int(scenario_id),
-                script_custom_data=json.dumps(custom_data),
-                user={"phone": lead.phone}  # Target phone number
-            )
+            params = {
+                "rule_id": int(scenario_id),
+                "script_custom_data": json.dumps(custom_data),
+                "user": {"phone": lead.phone}  # Target phone number
+            }
+
+            # Add caller ID if configured
+            if self.caller_id:
+                params["caller_id"] = self.caller_id
+
+            result = self.api.start_scenarios(**params)
 
             return {
                 "success": True,
