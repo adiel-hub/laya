@@ -19,7 +19,9 @@ export const useWebSocket = (onMessage) => {
   }, [onMessage]);
 
   useEffect(() => {
+    console.log('🔧 WebSocket useEffect initialized (should only happen once)');
     const connect = () => {
+      console.log('🔄 Attempting WebSocket connection to:', WS_URL);
       try {
         const ws = new WebSocket(WS_URL);
 
