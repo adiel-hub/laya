@@ -31,7 +31,7 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
     }
 
     # Assistant configuration with Google Gemini Live native audio
-    # Using realtimeConfig for Gemini 2.0 Multimodal Live API
+    # The voice is handled by realtimeConfig in the model, so we use a dummy voice provider
     payload = {
         "name": name,
         "model": {
@@ -46,6 +46,16 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
                         }
                     }
                 }
+            }
+        },
+        # Using custom-voice with Gemini Live TTS server
+        # Deploy the gemini_tts_server.py and replace URL below with your server URL
+        "voice": {
+            "provider": "custom-voice",
+            "server": {
+                "url": "https://your-server-url.com/synthesize",  # Replace with your deployed server URL
+                "secret": "your-secret-token",  # Same as VAPI_SECRET in gemini_tts_server.py
+                "timeoutSeconds": 30
             }
         },
         "firstMessage": first_message,
@@ -154,40 +164,13 @@ if __name__ == "__main__":
     print("\nChecking existing assistants...")
     existing_assistants = list_assistants()
 
-    # Update existing assistant if it exists
-    existing_laya = None
-    for assistant in existing_assistants:
-        if assistant.get('name') == 'Laya Assistant':
-            existing_laya = assistant
-            break
-
-    if existing_laya:
-        print("\n" + "=" * 50)
-        print(f"\nUpdating existing Laya Assistant (ID: {existing_laya.get('id')})...")
-        updates = {
-            "model": {
-                "provider": "google",
-                "model": "gemini-2.5-flash",
-                "realtimeConfig": {
-                    "speechConfig": {
-                        "voiceConfig": {
-                            "prebuiltVoiceConfig": {
-                                "voiceName": "Charon"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        assistant = update_assistant(existing_laya.get('id'), updates)
-    else:
-        # Create new assistant
-        print("\n" + "=" * 50)
-        print("\nCreating new assistant with Google Gemini...")
-        assistant = create_assistant(
-            name="Laya Assistant",
-            first_message="Hello! I'm Laya, your AI assistant. How can I help you today?"
-        )
+    # Create new assistant
+    print("\n" + "=" * 50)
+    print("\nCreating new assistant with Google Gemini Live native audio...")
+    assistant = create_assistant(
+        name="Laya Assistant - Gemini Live",
+        first_message="Hello! I'm Laya, your AI assistant. How can I help you today?"
+    )
 
     print("\n" + "=" * 50)
     print("\n✨ Setup complete!")
