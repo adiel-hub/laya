@@ -2,7 +2,7 @@
  * Main App Component
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { useWebSocket } from './hooks/useWebSocket';
 import Layout from './components/layout/Layout';
@@ -48,7 +48,7 @@ function App() {
   };
 
   // Request notification permission on load
-  useState(() => {
+  useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
