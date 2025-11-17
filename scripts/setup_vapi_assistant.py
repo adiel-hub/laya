@@ -30,21 +30,23 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
         "Content-Type": "application/json"
     }
 
-    # Assistant configuration with custom model and voice providers
-    # Note: For Gemini Live native audio, we need to use custom-voice provider
-    # or configure it through VAPI's voice library
+    # Assistant configuration with Google Gemini Live native audio
+    # Using realtimeConfig for Gemini 2.0 Multimodal Live API
     payload = {
         "name": name,
         "model": {
             "provider": "google",
-            "model": "gemini-2.5-flash"
-        },
-        # Using PlayHT as a high-quality voice provider
-        # To use Gemini native audio, you may need to set up a custom voice in VAPI dashboard
-        "voice": {
-            "provider": "playht",
-            "voiceId": "s3://voice-cloning-zero-shot/d9ff78ba-d016-47f6-b0ef-dd630f59414e/female-cs/manifest.json",  # Natural female voice
-            "speed": 1.0
+            "model": "gemini-2.5-flash",
+            # Real-time configuration for Gemini Live with native audio
+            "realtimeConfig": {
+                "speechConfig": {
+                    "voiceConfig": {
+                        "prebuiltVoiceConfig": {
+                            "voiceName": "Charon"  # Options: "Puck", "Charon"
+                        }
+                    }
+                }
+            }
         },
         "firstMessage": first_message,
         # Optional: Add more configuration as needed
@@ -152,13 +154,40 @@ if __name__ == "__main__":
     print("\nChecking existing assistants...")
     existing_assistants = list_assistants()
 
-    # Create new assistant
-    print("\n" + "=" * 50)
-    print("\nCreating new assistant with Google Gemini...")
-    assistant = create_assistant(
-        name="Laya Assistant",
-        first_message="Hello! I'm Laya, your AI assistant. How can I help you today?"
-    )
+    # Update existing assistant if it exists
+    existing_laya = None
+    for assistant in existing_assistants:
+        if assistant.get('name') == 'Laya Assistant':
+            existing_laya = assistant
+            break
+
+    if existing_laya:
+        print("\n" + "=" * 50)
+        print(f"\nUpdating existing Laya Assistant (ID: {existing_laya.get('id')})...")
+        updates = {
+            "model": {
+                "provider": "google",
+                "model": "gemini-2.5-flash",
+                "realtimeConfig": {
+                    "speechConfig": {
+                        "voiceConfig": {
+                            "prebuiltVoiceConfig": {
+                                "voiceName": "Charon"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assistant = update_assistant(existing_laya.get('id'), updates)
+    else:
+        # Create new assistant
+        print("\n" + "=" * 50)
+        print("\nCreating new assistant with Google Gemini...")
+        assistant = create_assistant(
+            name="Laya Assistant",
+            first_message="Hello! I'm Laya, your AI assistant. How can I help you today?"
+        )
 
     print("\n" + "=" * 50)
     print("\n✨ Setup complete!")
