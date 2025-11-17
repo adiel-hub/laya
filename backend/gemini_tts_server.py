@@ -12,7 +12,9 @@ import os
 import json
 import logging
 from io import BytesIO
-import google.generativeai as genai
+import asyncio
+from google import genai
+from google.genai import types
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,9 +27,11 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')  # Set your Google API key
 VAPI_SECRET = os.getenv('VAPI_SECRET', 'your-secret-token')  # Secret for VAPI authentication
 PORT = int(os.getenv('PORT', 8080))
 
-# Configure Google Generative AI
+# Configure Google Generative AI Client
+client = None
 if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
+    client = genai.Client(api_key=GOOGLE_API_KEY)
+    logger.info("Google Gemini Client initialized")
 else:
     logger.warning("GOOGLE_API_KEY not set. Please set it in environment variables.")
 
@@ -82,15 +86,26 @@ def synthesize_speech():
     Returns:
         Audio stream or JSON error
     """
-    # Authenticate request
-    if not authenticate_request():
-        logger.warning("Unauthorized request to /synthesize")
-        return jsonify({'error': 'Unauthorized'}), 401
-
-    # Parse request data
+    # Parse request data first
     data = request.get_json()
     if not data:
         return jsonify({'error': 'No JSON data provided'}), 400
+
+    # Authenticate request (now data is already parsed)
+    auth_header = request.headers.get('Authorization')
+    is_authenticated = False
+
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        if token == VAPI_SECRET:
+            is_authenticated = True
+
+    if not is_authenticated and data.get('secret') == VAPI_SECRET:
+        is_authenticated = True
+
+    if not is_authenticated:
+        logger.warning("Unauthorized request to /synthesize")
+        return jsonify({'error': 'Unauthorized'}), 401
 
     text = data.get('text', '')
     if not text:
@@ -103,26 +118,20 @@ def synthesize_speech():
     logger.info(f"Synthesizing: '{text[:50]}...' with voice: {voice_id}")
 
     try:
-        # Use Google Generative AI for TTS
-        # Note: Gemini Live API requires specific configuration
-        # This is a simplified version - you may need to adjust based on API updates
+        if not client:
+            return jsonify({'error': 'Google API client not initialized'}), 500
 
-        model = genai.GenerativeModel('gemini-2.5-flash')
-
-        # For Gemini Live native audio, we need to use the Live API
-        # This is a placeholder - actual implementation would use the Live API streaming
-
-        # Alternative: Use Google Cloud Text-to-Speech API as fallback
-        audio_data = synthesize_with_google_tts(text, voice_id)
+        # Use Gemini Live API with native audio
+        audio_data = asyncio.run(synthesize_with_gemini_live(text, voice_id))
 
         if audio_data:
             # Return audio stream
             return Response(
                 audio_data,
-                mimetype='audio/wav',
+                mimetype='audio/pcm',
                 headers={
-                    'Content-Type': 'audio/wav',
-                    'Content-Disposition': 'inline; filename=speech.wav'
+                    'Content-Type': 'audio/pcm;rate=24000',
+                    'Content-Disposition': 'inline; filename=speech.pcm'
                 }
             )
         else:
@@ -179,26 +188,65 @@ def synthesize_with_google_tts(text, voice_name='en-US-Studio-O'):
         return None
 
 
-def synthesize_with_gemini_live(text, voice_config):
+async def synthesize_with_gemini_live(text, voice_name='Charon'):
     """
-    Synthesize speech using Gemini Live API (when available).
-
-    This is a placeholder for future implementation when Gemini Live API
-    provides direct TTS capabilities.
+    Synthesize speech using Gemini Live API with native audio.
 
     Args:
         text: Text to synthesize
-        voice_config: Voice configuration
+        voice_name: Voice name (Charon or Puck)
 
     Returns:
-        bytes: Audio data
+        bytes: Audio data in PCM format
     """
-    # TODO: Implement Gemini Live API integration
-    # This would require using the Gemini Live streaming API
-    # with native audio output
+    try:
+        # Model with native audio support
+        model = "gemini-2.5-flash-native-audio-preview-09-2025"
 
-    logger.warning("Gemini Live direct TTS not yet implemented")
-    return None
+        # Configuration for TTS
+        config = {
+            "response_modalities": ["AUDIO"],
+            "speech_config": {
+                "voice_config": {
+                    "prebuilt_voice_config": {
+                        "voice_name": voice_name
+                    }
+                }
+            }
+        }
+
+        # Collect audio bytes
+        audio_buffer = BytesIO()
+
+        # Connect to Live API and send text
+        async with client.aio.live.connect(model=model, config=config) as session:
+            # Send the text as input
+            await session.send(text, end_of_turn=True)
+
+            # Receive audio response
+            async for response in session.receive():
+                # Check if response contains audio
+                if response.server_content:
+                    if hasattr(response.server_content, 'model_turn'):
+                        for part in response.server_content.model_turn.parts:
+                            if hasattr(part, 'inline_data') and part.inline_data:
+                                # Extract audio data
+                                audio_buffer.write(part.inline_data.data)
+
+        audio_data = audio_buffer.getvalue()
+
+        if audio_data:
+            logger.info(f"Generated {len(audio_data)} bytes of audio")
+            return audio_data
+        else:
+            logger.error("No audio data received from Gemini Live")
+            return None
+
+    except Exception as e:
+        logger.error(f"Error with Gemini Live API: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
 
 
 @app.route('/voices', methods=['GET'])
