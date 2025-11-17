@@ -216,24 +216,24 @@ class VoximplantSetup:
         self.get_or_create_application()
 
         # Step 2: Create/update scenarios
-        registration_scenario_id = self.create_or_update_scenario(
-            'registration_recovery',
+        dropoff_scenario_id = self.create_or_update_scenario(
+            'dropoff',
             REGISTRATION_SCENARIO_FILE
         )
 
         dormant_scenario_id = self.create_or_update_scenario(
-            'dormant_reactivation',
+            'dormant',
             DORMANT_SCENARIO_FILE
         )
 
         # Step 3: Create/update routing rules
-        registration_rule_id = self.create_or_update_rule(
-            'registration_recovery_rule',
-            registration_scenario_id
+        dropoff_rule_id = self.create_or_update_rule(
+            'dropoff_rule',
+            dropoff_scenario_id
         )
 
         dormant_rule_id = self.create_or_update_rule(
-            'dormant_reactivation_rule',
+            'dormant_rule',
             dormant_scenario_id
         )
 
@@ -243,14 +243,14 @@ class VoximplantSetup:
         print("="*60)
         print(f"\nApplication ID: {self.application_id}")
         print(f"\nScenarios:")
-        print(f"  - registration_recovery: {registration_scenario_id}")
-        print(f"  - dormant_reactivation: {dormant_scenario_id}")
+        print(f"  - dropoff: {dropoff_scenario_id}")
+        print(f"  - dormant: {dormant_scenario_id}")
         print(f"\nRouting Rules (USE THESE IN .env):")
-        print(f"  - Registration Rule ID: {registration_rule_id}")
+        print(f"  - Dropoff Rule ID: {dropoff_rule_id}")
         print(f"  - Dormant Rule ID: {dormant_rule_id}")
 
         print(f"\n📝 Update your backend/.env file:")
-        print(f"VOXIMPLANT_SCENARIO_ID_REGISTRATION={registration_rule_id}")
+        print(f"VOXIMPLANT_SCENARIO_ID_REGISTRATION={dropoff_rule_id}")
         print(f"VOXIMPLANT_SCENARIO_ID_DORMANT={dormant_rule_id}")
 
         print("\n" + "="*60)
@@ -258,11 +258,11 @@ class VoximplantSetup:
         return {
             'application_id': self.application_id,
             'scenarios': {
-                'registration': registration_scenario_id,
+                'dropoff': dropoff_scenario_id,
                 'dormant': dormant_scenario_id
             },
             'rules': {
-                'registration': registration_rule_id,
+                'dropoff': dropoff_rule_id,
                 'dormant': dormant_rule_id
             }
         }
