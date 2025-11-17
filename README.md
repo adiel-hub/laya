@@ -256,14 +256,50 @@ Proprietary - LAYA Project
 
 ---
 
+## 🎙️ VAPI Integration with Gemini Live
+
+### Custom Voice Provider Setup
+
+For using Google Gemini Live native audio with VAPI, we've created a custom TTS webhook server:
+
+**Files:**
+- `backend/gemini_tts_server.py` - Flask webhook server for TTS
+- `backend/GEMINI_TTS_SETUP.md` - Complete setup guide
+- `backend/Dockerfile.tts` - Docker deployment configuration
+- `scripts/setup_vapi_assistant.py` - VAPI assistant configuration script
+
+**Quick Setup:**
+```bash
+# 1. Deploy TTS server (see GEMINI_TTS_SETUP.md for details)
+cd backend
+pip install -r requirements-tts.txt
+python gemini_tts_server.py
+
+# 2. Configure VAPI assistant
+cd ../scripts
+python3 setup_vapi_assistant.py
+```
+
+**Features:**
+- ✅ Google Gemini 2.5 Flash model
+- ✅ Custom voice provider integration
+- ✅ Hebrew transcription support
+- ✅ Production-ready deployment options (Railway, GCP, Render)
+
+See [backend/GEMINI_TTS_SETUP.md](backend/GEMINI_TTS_SETUP.md) for complete deployment instructions.
+
+---
+
 ## 🎯 Next Steps
 
 1. ✅ Complete backend implementation
 2. ✅ Build React dashboard
-3. ⏳ Test Hebrew conversations
-4. ⏳ Refine AI prompts
-5. ⏳ Deploy to production
-6. ⏳ Run pilot with 100 calls
+3. ✅ VAPI integration with custom TTS server
+4. ⏳ Deploy TTS webhook to production
+5. ⏳ Test Hebrew conversations
+6. ⏳ Refine AI prompts
+7. ⏳ Deploy to production
+8. ⏳ Run pilot with 100 calls
 
 ---
 
