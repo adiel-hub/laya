@@ -20,17 +20,26 @@ export const useWebSocket = (onMessage) => {
 
   useEffect(() => {
     console.log('🔧 WebSocket useEffect initialized (should only happen once)');
+    let isCleanedUp = false; // Flag to prevent actions after cleanup
+
     const connect = () => {
+      if (isCleanedUp) {
+        console.log('⚠️  Connect called after cleanup, ignoring');
+        return;
+      }
+
       console.log('🔄 Attempting WebSocket connection to:', WS_URL);
       try {
         const ws = new WebSocket(WS_URL);
 
         ws.onopen = () => {
+          if (isCleanedUp) return;
           console.log('✅ WebSocket connected');
           setIsConnected(true);
         };
 
         ws.onmessage = (event) => {
+          if (isCleanedUp) return;
           try {
             const data = JSON.parse(event.data);
             console.log('📨 WebSocket message:', data);
@@ -45,15 +54,18 @@ export const useWebSocket = (onMessage) => {
         };
 
         ws.onerror = (error) => {
+          if (isCleanedUp) return;
           console.error('❌ WebSocket error:', error);
         };
 
         ws.onclose = () => {
+          if (isCleanedUp) return;
           console.log('🔌 WebSocket disconnected');
           setIsConnected(false);
 
           // Attempt to reconnect after 3 seconds
           reconnectTimeoutRef.current = setTimeout(() => {
+            if (isCleanedUp) return;
             console.log('🔄 Attempting to reconnect...');
             connect();
           }, 3000);
@@ -69,6 +81,9 @@ export const useWebSocket = (onMessage) => {
 
     // Cleanup on unmount
     return () => {
+      console.log('🧹 Cleaning up WebSocket connection');
+      isCleanedUp = true;
+
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
