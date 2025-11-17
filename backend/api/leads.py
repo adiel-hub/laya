@@ -66,6 +66,7 @@ def create_lead(lead: LeadCreate, db: Session = Depends(get_db)):
     - **last_active**: Required for dormant leads (ISO datetime)
     - **notes**: Optional notes
     """
+    print(f"📥 Received lead data: {lead.model_dump()}")
     created_lead = lead_service.create_lead(db, lead)
     return created_lead
 

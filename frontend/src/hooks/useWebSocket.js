@@ -11,6 +11,12 @@ export const useWebSocket = (onMessage) => {
   const [lastMessage, setLastMessage] = useState(null);
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
+  const onMessageRef = useRef(onMessage);
+
+  // Keep the ref updated
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
 
   useEffect(() => {
     const connect = () => {
@@ -28,8 +34,8 @@ export const useWebSocket = (onMessage) => {
             console.log('📨 WebSocket message:', data);
             setLastMessage(data);
 
-            if (onMessage) {
-              onMessage(data);
+            if (onMessageRef.current) {
+              onMessageRef.current(data);
             }
           } catch (error) {
             console.error('Error parsing WebSocket message:', error);
@@ -68,7 +74,7 @@ export const useWebSocket = (onMessage) => {
         wsRef.current.close();
       }
     };
-  }, [onMessage]);
+  }, []); // Remove onMessage dependency to prevent reconnection loop
 
   // Send message function
   const sendMessage = (message) => {

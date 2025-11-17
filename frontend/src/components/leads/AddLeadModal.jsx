@@ -47,7 +47,14 @@ const AddLeadModal = ({ isOpen, onClose, onSave, editLead = null }) => {
     e.preventDefault();
 
     if (validateForm()) {
-      onSave(formData);
+      // Convert date to ISO datetime if it's dormant type
+      const dataToSave = { ...formData };
+      if (dataToSave.type === 'dormant' && dataToSave.last_active) {
+        // Convert YYYY-MM-DD to ISO datetime (add time component)
+        dataToSave.last_active = new Date(dataToSave.last_active + 'T00:00:00').toISOString();
+      }
+
+      onSave(dataToSave);
       onClose();
     }
   };
