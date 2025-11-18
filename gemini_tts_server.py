@@ -11,6 +11,7 @@ import requests
 import os
 import json
 import logging
+import time
 from io import BytesIO
 import asyncio
 import queue
@@ -155,6 +156,10 @@ def synthesize_speech():
         # Create audio streaming generator
         def generate_audio():
             """Generator that streams audio chunks from Gemini Live"""
+            # Performance tracking
+            start_time = time.time()
+            first_chunk_time = None
+
             # Create queue for async-to-sync bridge
             audio_queue = queue.Queue()
 
@@ -165,35 +170,59 @@ def synthesize_speech():
                 loop.run_until_complete(stream_gemini_live_audio(text, voice_name, audio_queue))
                 loop.close()
 
-            stream_thread = threading.Thread(target=run_async_stream)
+            stream_thread = threading.Thread(target=run_async_stream, daemon=True)
             stream_thread.start()
 
             # Yield audio chunks as they arrive
             chunk_count = 0
             total_bytes = 0
-            while True:
-                chunk = audio_queue.get()
-                if chunk is None:  # Stream complete
-                    break
 
-                # Resample if needed
-                if sample_rate != 24000:
-                    chunk = resample_audio_chunk(chunk, 24000, sample_rate)
+            try:
+                while True:
+                    # Use timeout to prevent infinite blocking
+                    try:
+                        chunk = audio_queue.get(timeout=30)
+                    except queue.Empty:
+                        logger.error("⚠️ Timeout waiting for audio chunks (30s)")
+                        break
 
-                chunk_count += 1
-                total_bytes += len(chunk)
-                logger.info(f"🔊 Yielding chunk {chunk_count}: {len(chunk)} bytes")
-                yield chunk
+                    if chunk is None:  # Stream complete
+                        break
 
-            stream_thread.join()
-            logger.info(f"✅ Stream complete: {chunk_count} chunks, {total_bytes} total bytes")
+                    # Track time to first chunk
+                    if first_chunk_time is None:
+                        first_chunk_time = time.time()
+                        time_to_first = (first_chunk_time - start_time) * 1000
+                        logger.info(f"⚡ Time to first chunk: {time_to_first:.0f}ms")
 
-        # Return streaming response (Flask automatically uses chunked transfer encoding)
+                    # Resample if needed
+                    if sample_rate != 24000:
+                        chunk = resample_audio_chunk(chunk, 24000, sample_rate)
+
+                    chunk_count += 1
+                    total_bytes += len(chunk)
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    logger.info(f"🔊 Chunk {chunk_count}: {len(chunk)} bytes @ {elapsed_ms:.0f}ms (total: {total_bytes} bytes)")
+                    yield chunk
+
+            except Exception as e:
+                logger.error(f"❌ Error in audio generator: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+            finally:
+                stream_thread.join(timeout=5)
+                total_time_ms = (time.time() - start_time) * 1000
+                logger.info(f"✅ Stream complete: {chunk_count} chunks, {total_bytes} bytes, {total_time_ms:.0f}ms total")
+
+        # Return streaming response with production headers
         response = Response(
             stream_with_context(generate_audio()),
             mimetype='application/octet-stream',
             headers={
-                'Content-Type': 'application/octet-stream'
+                'Content-Type': 'application/octet-stream',
+                'Transfer-Encoding': 'chunked',
+                'X-Accel-Buffering': 'no',  # Disable Nginx buffering
+                'Cache-Control': 'no-cache, no-store, must-revalidate'
             }
         )
         return response
