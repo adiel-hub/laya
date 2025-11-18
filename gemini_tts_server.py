@@ -304,7 +304,7 @@ async def stream_gemini_live_audio(text, voice_name, audio_queue):
                     }
                 }
             },
-            "system_instruction": "You are a text-to-speech system. When given text, speak it exactly as written without adding any additional commentary or thoughts. Only output audio."
+            "system_instruction": ""
         }
 
         # Connect to Live API and send text
