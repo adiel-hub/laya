@@ -41,7 +41,9 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
         },
         # Using custom-voice with Gemini Live TTS server
         # The TTS server handles Gemini Live voice synthesis internally
-        # NOTE: Do NOT include voiceId field - VAPI will reject it with Google model
+        # NOTE: VAPI automatically adds "voiceId": "sarah" to custom-voice configs
+        # We don't include it here to avoid validation errors, but VAPI will add it after creation
+        # The TTS server reads the voiceId from VAPI's webhook request dynamically
         "voice": {
             "provider": "custom-voice",
             "server": {
@@ -49,8 +51,6 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
                 "secret": "laya-tts-secret-2025",  # Same as VAPI_SECRET in gemini_tts_server.py
                 "timeoutSeconds": 30
             }
-            # NOTE: voiceId is NOT supported by VAPI for custom-voice provider
-            # Voice selection is handled server-side in gemini_tts_server.py (currently set to 'Puck')
         },
         "transcriber": {
             "language": "Hebrew",
