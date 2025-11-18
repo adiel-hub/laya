@@ -17,22 +17,17 @@ import queue
 import threading
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Configure logging
-log_level = os.getenv('LOG_LEVEL', 'INFO')
-logging.basicConfig(level=getattr(logging, log_level))
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configuration from environment variables
+# Configuration
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')  # Set your Google API key
 VAPI_SECRET = os.getenv('VAPI_SECRET', 'your-secret-token')  # Secret for VAPI authentication
-PORT = int(os.getenv('PORT', 8000))
+PORT = int(os.getenv('PORT', 8080))
 
 # Configure Google Generative AI Client
 client = None
@@ -133,43 +128,49 @@ def synthesize_speech():
                 'supportedRates': valid_sample_rates
             }), 400
 
-        # Extract voice preference from URL query parameter (?voice=Zephyr)
-        # VAPI's custom-voice provider does NOT support voiceId field in assistant config
-        # Voice selection is done via URL parameter instead: /api/synthesize?voice=Zephyr
-        voice_name = request.args.get('voice', 'Zephyr')
-        logger.info(f"Using voice from URL param: {voice_name}")
-
         # Authenticate request
         vapi_secret = request.headers.get('X-VAPI-SECRET') or request.headers.get('Authorization', '').replace('Bearer ', '')
         if vapi_secret != VAPI_SECRET:
             logger.warning("Unauthorized request to /api/synthesize")
             return jsonify({'error': 'Unauthorized'}), 401
 
-        logger.info(f"Synthesizing (BUFFERED): '{text[:50]}...', sampleRate={sample_rate}Hz, voice={voice_name}")
+        logger.info(f"Synthesizing (STREAMING): '{text[:50]}...', sampleRate={sample_rate}Hz")
 
         if not client:
             logger.error("Google API client not initialized")
             return jsonify({'error': 'Google API client not initialized'}), 500
 
-        # Use buffered Gemini Live API (reverted from streaming due to text generation issue)
-        # TODO: Migrate to dedicated TTS API (gemini-2.5-flash-preview-tts) for proper streaming
-        audio_data = asyncio.run(synthesize_with_gemini_live(text, sample_rate, voice_name))
+        # Create queue for async->sync communication
+        audio_queue = queue.Queue()
 
-        if audio_data:
-            # Return raw PCM audio
-            response = Response(
-                audio_data,
-                mimetype='application/octet-stream',
-                headers={
-                    'Content-Type': 'application/octet-stream',
-                    'Content-Length': str(len(audio_data))
-                }
-            )
-            logger.info(f"TTS completed: {len(audio_data)} bytes")
-            return response
-        else:
-            logger.error("No audio data generated")
-            return jsonify({'error': 'Failed to synthesize speech'}), 500
+        # Run async streaming in background thread
+        def run_async_streaming():
+            asyncio.run(stream_gemini_live_audio(text, sample_rate, 'Zephyr', audio_queue))
+
+        thread = threading.Thread(target=run_async_streaming, daemon=True)
+        thread.start()
+
+        # Generator that yields audio chunks as they arrive (enables true streaming)
+        def generate_audio():
+            """Yield audio chunks from queue for real-time streaming to VAPI"""
+            total_bytes = 0
+            while True:
+                chunk = audio_queue.get()
+                if chunk is None:  # Sentinel value for end of stream
+                    logger.info(f"Streaming complete: {total_bytes} bytes total")
+                    break
+                total_bytes += len(chunk)
+                yield chunk
+
+        # Return streaming response with chunked transfer encoding
+        return Response(
+            stream_with_context(generate_audio()),
+            mimetype='application/octet-stream',
+            headers={
+                'Content-Type': 'application/octet-stream',
+                'Transfer-Encoding': 'chunked'
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error synthesizing speech: {e}")
@@ -232,7 +233,7 @@ async def stream_gemini_live_audio(text, sample_rate, voice_name, audio_queue):
     Args:
         text: Text to synthesize
         sample_rate: Audio sample rate (8000, 16000, 22050, or 24000)
-        voice_name: Voice name (Charon, Puck, or Zephyr)
+        voice_name: Voice name (Charon or Puck)
         audio_queue: Queue to send audio chunks for streaming
     """
     try:
@@ -290,14 +291,14 @@ async def stream_gemini_live_audio(text, sample_rate, voice_name, audio_queue):
         audio_queue.put(None)
 
 
-async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Zephyr'):
+async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Charon'):
     """
     Synthesize speech using Gemini Live API with native audio.
 
     Args:
         text: Text to synthesize
         sample_rate: Audio sample rate (8000, 16000, 22050, or 24000)
-        voice_name: Voice name (Charon, Puck, or Zephyr)
+        voice_name: Voice name (Charon or Puck)
 
     Returns:
         bytes: Raw PCM audio data (16-bit signed integer, little-endian, mono)
