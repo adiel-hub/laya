@@ -6,28 +6,31 @@ This server acts as a bridge between VAPI and Google Gemini Live API,
 enabling Gemini Live native audio to be used as a custom voice provider in VAPI.
 """
 
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask, request, jsonify, Response
 import requests
 import os
 import json
 import logging
 from io import BytesIO
 import asyncio
-import queue
-import threading
 from google import genai
 from google.genai import types
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+log_level = os.getenv('LOG_LEVEL', 'INFO')
+logging.basicConfig(level=getattr(logging, log_level))
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configuration
+# Configuration from environment variables
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')  # Set your Google API key
 VAPI_SECRET = os.getenv('VAPI_SECRET', 'your-secret-token')  # Secret for VAPI authentication
-PORT = int(os.getenv('PORT', 8080))
+PORT = int(os.getenv('PORT', 8000))
 
 # Configure Google Generative AI Client
 client = None
@@ -134,43 +137,30 @@ def synthesize_speech():
             logger.warning("Unauthorized request to /api/synthesize")
             return jsonify({'error': 'Unauthorized'}), 401
 
-        logger.info(f"Synthesizing (STREAMING): '{text[:50]}...', sampleRate={sample_rate}Hz")
+        logger.info(f"Synthesizing: '{text[:50]}...', sampleRate={sample_rate}Hz")
 
         if not client:
             logger.error("Google API client not initialized")
             return jsonify({'error': 'Google API client not initialized'}), 500
 
-        # Create queue for async->sync communication
-        audio_queue = queue.Queue()
+        # Use Gemini Live API with native audio
+        audio_data = asyncio.run(synthesize_with_gemini_live(text, sample_rate))
 
-        # Run async streaming in background thread
-        def run_async_streaming():
-            asyncio.run(stream_gemini_live_audio(text, sample_rate, 'Zephyr', audio_queue))
-
-        thread = threading.Thread(target=run_async_streaming, daemon=True)
-        thread.start()
-
-        # Generator that yields audio chunks as they arrive (enables true streaming)
-        def generate_audio():
-            """Yield audio chunks from queue for real-time streaming to VAPI"""
-            total_bytes = 0
-            while True:
-                chunk = audio_queue.get()
-                if chunk is None:  # Sentinel value for end of stream
-                    logger.info(f"Streaming complete: {total_bytes} bytes total")
-                    break
-                total_bytes += len(chunk)
-                yield chunk
-
-        # Return streaming response with chunked transfer encoding
-        return Response(
-            stream_with_context(generate_audio()),
-            mimetype='application/octet-stream',
-            headers={
-                'Content-Type': 'application/octet-stream',
-                'Transfer-Encoding': 'chunked'
-            }
-        )
+        if audio_data:
+            # Return raw PCM audio
+            response = Response(
+                audio_data,
+                mimetype='application/octet-stream',
+                headers={
+                    'Content-Type': 'application/octet-stream',
+                    'Content-Length': str(len(audio_data))
+                }
+            )
+            logger.info(f"TTS completed: {len(audio_data)} bytes")
+            return response
+        else:
+            logger.error("No audio data generated")
+            return jsonify({'error': 'Failed to synthesize speech'}), 500
 
     except Exception as e:
         logger.error(f"Error synthesizing speech: {e}")
@@ -225,80 +215,14 @@ def synthesize_with_google_tts(text, voice_name='en-US-Studio-O'):
         return None
 
 
-async def stream_gemini_live_audio(text, sample_rate, voice_name, audio_queue):
-    """
-    Stream audio chunks from Gemini Live API directly to a queue for real-time delivery.
-    This enables low-latency audio streaming to VAPI without buffering the entire response.
-
-    Args:
-        text: Text to synthesize
-        sample_rate: Audio sample rate (8000, 16000, 22050, or 24000)
-        voice_name: Voice name (Charon or Puck)
-        audio_queue: Queue to send audio chunks for streaming
-    """
-    try:
-        # Model with native audio support
-        model = "gemini-2.5-flash-native-audio-preview-09-2025"
-
-        # Configuration for TTS with native audio
-        config = {
-            "response_modalities": ["AUDIO"],
-            "speech_config": {
-                "voice_config": {
-                    "prebuilt_voice_config": {
-                        "voice_name": voice_name
-                    }
-                }
-            },
-            "system_instruction": "You are a text-to-speech system. When given text, speak it exactly as written without adding any additional commentary or thoughts. Only output audio."
-        }
-
-        # Connect to Live API and stream audio
-        async with client.aio.live.connect(model=model, config=config) as session:
-            # Send the text directly (removed "Please say the following text:" wrapper for lower latency)
-            await session.send_client_content(
-                turns=types.Content(
-                    role='user',
-                    parts=[types.Part(text=text)]
-                )
-            )
-
-            # Stream audio chunks as they arrive
-            async for response in session.receive():
-                if response.data is not None:
-                    # Apply resampling per chunk if needed (fast linear interpolation)
-                    chunk = response.data
-                    if sample_rate != 24000:
-                        chunk = resample_audio(chunk, 24000, sample_rate)
-
-                    # Send chunk immediately to streaming queue
-                    audio_queue.put(chunk)
-                    logger.info(f"Streamed {len(chunk)} bytes (resampled to {sample_rate}Hz)")
-                else:
-                    # Log non-audio responses
-                    if hasattr(response, 'server_content') and response.server_content:
-                        logger.debug(f"Non-audio response: {response.server_content}")
-
-        # Signal completion with None sentinel
-        audio_queue.put(None)
-        logger.info("Streaming completed")
-
-    except Exception as e:
-        logger.error(f"Error streaming Gemini Live audio: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        # Signal error/completion
-        audio_queue.put(None)
-
-
-async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Charon'):
+async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Zephyr'):
     """
     Synthesize speech using Gemini Live API with native audio.
 
     Args:
         text: Text to synthesize
         sample_rate: Audio sample rate (8000, 16000, 22050, or 24000)
-        voice_name: Voice name (Charon or Puck)
+        voice_name: Voice name (Charon, Puck, or Zephyr)
 
     Returns:
         bytes: Raw PCM audio data (16-bit signed integer, little-endian, mono)
@@ -325,11 +249,12 @@ async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Charo
 
         # Connect to Live API and send text
         async with client.aio.live.connect(model=model, config=config) as session:
-            # Send the text directly (removed "Please say the following text:" wrapper for lower latency)
+            # Send the text as input - prepend instruction for TTS behavior
+            tts_prompt = f"Please say the following text: {text}"
             await session.send_client_content(
                 turns=types.Content(
                     role='user',
-                    parts=[types.Part(text=text)]
+                    parts=[types.Part(text=tts_prompt)]
                 )
             )
 
@@ -368,9 +293,7 @@ async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Charo
 
 def resample_audio(audio_data, from_rate, to_rate):
     """
-    Fast resampling using linear interpolation for real-time streaming.
-    This is significantly faster than FFT-based resampling (scipy.signal.resample)
-    while maintaining acceptable quality for voice audio.
+    Resample PCM audio data from one sample rate to another.
 
     Args:
         audio_data: Raw PCM audio bytes (16-bit signed integer, little-endian)
@@ -380,24 +303,18 @@ def resample_audio(audio_data, from_rate, to_rate):
     Returns:
         bytes: Resampled PCM audio data
     """
-    # Skip resampling if rates match
-    if from_rate == to_rate:
-        return audio_data
-
     try:
         import numpy as np
+        from scipy import signal
 
         # Convert bytes to numpy array
         audio_array = np.frombuffer(audio_data, dtype=np.int16)
 
-        # Calculate new length
-        ratio = to_rate / from_rate
-        new_length = int(len(audio_array) * ratio)
+        # Calculate resampling ratio
+        num_samples = int(len(audio_array) * to_rate / from_rate)
 
-        # Fast linear interpolation (much faster than FFT-based resampling)
-        old_indices = np.arange(len(audio_array))
-        new_indices = np.linspace(0, len(audio_array) - 1, new_length)
-        resampled = np.interp(new_indices, old_indices, audio_array)
+        # Resample using scipy
+        resampled = signal.resample(audio_array, num_samples)
 
         # Convert back to int16 and bytes
         resampled_int16 = np.int16(resampled)
