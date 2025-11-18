@@ -17,17 +17,22 @@ import queue
 import threading
 from google import genai
 from google.genai import types
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+log_level = os.getenv('LOG_LEVEL', 'INFO')
+logging.basicConfig(level=getattr(logging, log_level))
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configuration
+# Configuration from environment variables
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')  # Set your Google API key
 VAPI_SECRET = os.getenv('VAPI_SECRET', 'your-secret-token')  # Secret for VAPI authentication
-PORT = int(os.getenv('PORT', 8080))
+PORT = int(os.getenv('PORT', 8000))
 
 # Configure Google Generative AI Client
 client = None
