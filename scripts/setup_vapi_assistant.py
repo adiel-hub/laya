@@ -53,7 +53,7 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
         "voice": {
             "provider": "custom-voice",
             "server": {
-                "url": "https://your-server-url.com/api/synthesize",  # Replace with your deployed server URL
+                "url": "https://unfriable-audacious-taisha.ngrok-free.dev/api/synthesize",
                 "secret": "laya-tts-secret-2025",  # Same as VAPI_SECRET in gemini_tts_server.py
                 "timeoutSeconds": 30
             }

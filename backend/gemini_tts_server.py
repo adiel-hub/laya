@@ -235,7 +235,8 @@ async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Charo
                         "voice_name": voice_name
                     }
                 }
-            }
+            },
+            "system_instruction": "You are a text-to-speech system. When given text, speak it exactly as written without adding any additional commentary or thoughts. Only output audio."
         }
 
         # Collect audio bytes
@@ -243,18 +244,25 @@ async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Charo
 
         # Connect to Live API and send text
         async with client.aio.live.connect(model=model, config=config) as session:
-            # Send the text as input
-            await session.send(text, end_of_turn=True)
+            # Send the text as input - prepend instruction for TTS behavior
+            tts_prompt = f"Please say the following text: {text}"
+            await session.send_client_content(
+                turns=types.Content(
+                    role='user',
+                    parts=[types.Part(text=tts_prompt)]
+                )
+            )
 
             # Receive audio response
             async for response in session.receive():
-                # Check if response contains audio
-                if response.server_content:
-                    if hasattr(response.server_content, 'model_turn'):
-                        for part in response.server_content.model_turn.parts:
-                            if hasattr(part, 'inline_data') and part.inline_data:
-                                # Extract audio data
-                                audio_buffer.write(part.inline_data.data)
+                # Extract audio data directly from response
+                if response.data is not None:
+                    audio_buffer.write(response.data)
+                    logger.info(f"Received {len(response.data)} bytes of audio data")
+                else:
+                    # Log if we got non-audio response
+                    if hasattr(response, 'server_content') and response.server_content:
+                        logger.warning(f"Received non-audio response: {response.server_content}")
 
         audio_data = audio_buffer.getvalue()
 
