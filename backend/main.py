@@ -3,8 +3,10 @@ LAYA AI Calling Agent - FastAPI Backend
 Main application file
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
 from database.db import init_db
@@ -57,6 +59,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Add validation error handler for debugging
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Custom handler for validation errors - logs details for debugging
+    """
+    print(f"❌ Validation Error on {request.method} {request.url}")
+    print(f"📋 Request body: {await request.body()}")
+    print(f"🔍 Errors: {exc.errors()}")
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
+
 
 # Include routers
 app.include_router(leads.router)
