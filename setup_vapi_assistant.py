@@ -50,12 +50,13 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
                 "timeoutSeconds": 30
             }
         },
+        "transcriber": {
+            "language": "Hebrew",
+            "model": "gemini-2.0-flash",
+            "provider": "google"
+        },
         "firstMessage": first_message,
         # Optional: Add more configuration as needed
-        # "transcriber": {
-        #     "provider": "deepgram",
-        #     "model": "nova-2"
-        # },
         # "recordingEnabled": True,
         # "endCallMessage": "Thank you for calling. Goodbye!",
         # "endCallPhrases": ["goodbye", "bye", "end call"]

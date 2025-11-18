@@ -142,7 +142,7 @@ def synthesize_speech():
 
         # Use buffered Gemini Live API (reverted from streaming due to text generation issue)
         # TODO: Migrate to dedicated TTS API (gemini-2.5-flash-preview-tts) for proper streaming
-        audio_data = asyncio.run(synthesize_with_gemini_live(text, sample_rate, 'Charon'))
+        audio_data = asyncio.run(synthesize_with_gemini_live(text, sample_rate, 'Puck'))
 
         if audio_data:
             # Return raw PCM audio
