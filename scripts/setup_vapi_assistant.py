@@ -41,6 +41,7 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
         },
         # Using custom-voice with Gemini Live TTS server
         # The TTS server handles Gemini Live voice synthesis internally
+        # NOTE: Do NOT include voiceId field - VAPI will reject it with Google model
         "voice": {
             "provider": "custom-voice",
             "server": {
