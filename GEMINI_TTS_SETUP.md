@@ -66,7 +66,7 @@ curl -X POST http://localhost:8080/synthesize \
   -H "Authorization: Bearer your_secure_secret_token" \
   -d '{
     "text": "Hello, this is a test of Gemini TTS!",
-    "voiceId": "Charon"
+    "voiceId": "Zephyr"
   }' \
   --output test.wav
 ```
@@ -146,6 +146,7 @@ python3 scripts/setup_vapi_assistant.py
 Currently configured voices:
 - **Charon**: Male voice from Gemini Live
 - **Puck**: Neutral voice from Gemini Live
+- **Zephyr**: Neutral voice from Gemini Live (default)
 
 You can extend this by modifying the `gemini_tts_server.py` file.
 

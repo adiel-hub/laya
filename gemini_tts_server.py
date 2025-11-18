@@ -133,10 +133,10 @@ def synthesize_speech():
                 'supportedRates': valid_sample_rates
             }), 400
 
-        # Extract voice preference from URL query parameter (?voice=Puck)
+        # Extract voice preference from URL query parameter (?voice=Zephyr)
         # VAPI's custom-voice provider does NOT support voiceId field in assistant config
-        # Voice selection is done via URL parameter instead: /api/synthesize?voice=Puck
-        voice_name = request.args.get('voice', 'Puck')
+        # Voice selection is done via URL parameter instead: /api/synthesize?voice=Zephyr
+        voice_name = request.args.get('voice', 'Zephyr')
         logger.info(f"Using voice from URL param: {voice_name}")
 
         # Authenticate request
@@ -232,7 +232,7 @@ async def stream_gemini_live_audio(text, sample_rate, voice_name, audio_queue):
     Args:
         text: Text to synthesize
         sample_rate: Audio sample rate (8000, 16000, 22050, or 24000)
-        voice_name: Voice name (Charon or Puck)
+        voice_name: Voice name (Charon, Puck, or Zephyr)
         audio_queue: Queue to send audio chunks for streaming
     """
     try:
@@ -290,14 +290,14 @@ async def stream_gemini_live_audio(text, sample_rate, voice_name, audio_queue):
         audio_queue.put(None)
 
 
-async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Charon'):
+async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Zephyr'):
     """
     Synthesize speech using Gemini Live API with native audio.
 
     Args:
         text: Text to synthesize
         sample_rate: Audio sample rate (8000, 16000, 22050, or 24000)
-        voice_name: Voice name (Charon or Puck)
+        voice_name: Voice name (Charon, Puck, or Zephyr)
 
     Returns:
         bytes: Raw PCM audio data (16-bit signed integer, little-endian, mono)
@@ -430,6 +430,13 @@ def list_voices():
             'language': 'en-US',
             'gender': 'NEUTRAL',
             'description': 'Gemini Live native voice - Puck'
+        },
+        {
+            'id': 'Zephyr',
+            'name': 'Zephyr',
+            'language': 'en-US',
+            'gender': 'NEUTRAL',
+            'description': 'Gemini Live native voice - Zephyr'
         }
     ]
 
