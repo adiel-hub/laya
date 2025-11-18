@@ -49,6 +49,8 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
                 "secret": "laya-tts-secret-2025",  # Same as VAPI_SECRET in gemini_tts_server.py
                 "timeoutSeconds": 30
             }
+            # NOTE: voiceId is NOT supported by VAPI for custom-voice provider
+            # Voice selection is handled server-side in gemini_tts_server.py (currently set to 'Puck')
         },
         "transcriber": {
             "language": "Hebrew",
