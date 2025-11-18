@@ -6,13 +6,15 @@ This server acts as a bridge between VAPI and Google Gemini Live API,
 enabling Gemini Live native audio to be used as a custom voice provider in VAPI.
 """
 
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, stream_with_context
 import requests
 import os
 import json
 import logging
 from io import BytesIO
 import asyncio
+import queue
+import threading
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -78,7 +80,7 @@ def health_check():
 @app.route('/api/synthesize', methods=['POST'])
 def synthesize_speech():
     """
-    Synthesize speech from text using Google Gemini Live API.
+    Synthesize speech from text using Google Gemini Live API with streaming.
 
     VAPI Request Format:
     {
@@ -95,6 +97,7 @@ def synthesize_speech():
 
     Returns:
         Raw PCM audio data (16-bit signed integer, little-endian, mono)
+        Streamed with chunked transfer encoding for low latency
     """
     try:
         # Parse request data
@@ -131,36 +134,69 @@ def synthesize_speech():
                 'supportedRates': valid_sample_rates
             }), 400
 
+        # Extract voice from URL parameter (e.g., /api/synthesize?voice=Zephyr)
+        voice_name = request.args.get('voice', 'Zephyr')
+        if voice_name not in ['Charon', 'Puck', 'Zephyr']:
+            logger.warning(f"Invalid voice {voice_name}, using Zephyr")
+            voice_name = 'Zephyr'
+
         # Authenticate request
         vapi_secret = request.headers.get('X-VAPI-SECRET') or request.headers.get('Authorization', '').replace('Bearer ', '')
         if vapi_secret != VAPI_SECRET:
             logger.warning("Unauthorized request to /api/synthesize")
             return jsonify({'error': 'Unauthorized'}), 401
 
-        logger.info(f"Synthesizing: '{text[:50]}...', sampleRate={sample_rate}Hz")
+        logger.info(f"🎙️ Streaming synthesis: '{text[:50]}...', voice={voice_name}, rate={sample_rate}Hz")
 
         if not client:
             logger.error("Google API client not initialized")
             return jsonify({'error': 'Google API client not initialized'}), 500
 
-        # Use Gemini Live API with native audio
-        audio_data = asyncio.run(synthesize_with_gemini_live(text, sample_rate))
+        # Create audio streaming generator
+        def generate_audio():
+            """Generator that streams audio chunks from Gemini Live"""
+            # Create queue for async-to-sync bridge
+            audio_queue = queue.Queue()
 
-        if audio_data:
-            # Return raw PCM audio
-            response = Response(
-                audio_data,
-                mimetype='application/octet-stream',
-                headers={
-                    'Content-Type': 'application/octet-stream',
-                    'Content-Length': str(len(audio_data))
-                }
-            )
-            logger.info(f"TTS completed: {len(audio_data)} bytes")
-            return response
-        else:
-            logger.error("No audio data generated")
-            return jsonify({'error': 'Failed to synthesize speech'}), 500
+            # Start async streaming in background thread
+            def run_async_stream():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(stream_gemini_live_audio(text, voice_name, audio_queue))
+                loop.close()
+
+            stream_thread = threading.Thread(target=run_async_stream)
+            stream_thread.start()
+
+            # Yield audio chunks as they arrive
+            chunk_count = 0
+            total_bytes = 0
+            while True:
+                chunk = audio_queue.get()
+                if chunk is None:  # Stream complete
+                    break
+
+                # Resample if needed
+                if sample_rate != 24000:
+                    chunk = resample_audio_chunk(chunk, 24000, sample_rate)
+
+                chunk_count += 1
+                total_bytes += len(chunk)
+                logger.info(f"🔊 Yielding chunk {chunk_count}: {len(chunk)} bytes")
+                yield chunk
+
+            stream_thread.join()
+            logger.info(f"✅ Stream complete: {chunk_count} chunks, {total_bytes} total bytes")
+
+        # Return streaming response (Flask automatically uses chunked transfer encoding)
+        response = Response(
+            stream_with_context(generate_audio()),
+            mimetype='application/octet-stream',
+            headers={
+                'Content-Type': 'application/octet-stream'
+            }
+        )
+        return response
 
     except Exception as e:
         logger.error(f"Error synthesizing speech: {e}")
@@ -213,6 +249,62 @@ def synthesize_with_google_tts(text, voice_name='en-US-Studio-O'):
     except Exception as e:
         logger.error(f"Error with Google TTS: {e}")
         return None
+
+
+async def stream_gemini_live_audio(text, voice_name, audio_queue):
+    """
+    Stream audio chunks from Gemini Live API to a queue.
+    Runs in background thread and filters audio-only chunks.
+
+    Args:
+        text: Text to synthesize
+        voice_name: Voice name (Charon, Puck, or Zephyr)
+        audio_queue: Queue to put audio chunks into
+    """
+    try:
+        # Model with native audio support
+        model = "gemini-2.5-flash-native-audio-preview-09-2025"
+
+        # Configuration for TTS with native audio
+        config = {
+            "response_modalities": ["AUDIO"],
+            "speech_config": {
+                "voice_config": {
+                    "prebuilt_voice_config": {
+                        "voice_name": voice_name
+                    }
+                }
+            },
+            "system_instruction": "You are a text-to-speech system. When given text, speak it exactly as written without adding any additional commentary or thoughts. Only output audio."
+        }
+
+        # Connect to Live API and send text
+        async with client.aio.live.connect(model=model, config=config) as session:
+            # Send text directly without wrapper for lower latency
+            await session.send_client_content(
+                turns=types.Content(
+                    role='user',
+                    parts=[types.Part(text=text)]
+                )
+            )
+
+            # Stream audio chunks as they arrive
+            async for response in session.receive():
+                # ✅ Only process audio chunks (filter out text/thought parts)
+                if response.data is not None:
+                    audio_queue.put(response.data)
+                    logger.info(f"Streamed {len(response.data)} bytes of audio data")
+                # ❌ Ignore text/thought parts that caused previous streaming failure
+
+        # Signal completion
+        audio_queue.put(None)
+        logger.info("Audio streaming completed")
+
+    except Exception as e:
+        logger.error(f"Error streaming from Gemini Live API: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        audio_queue.put(None)
 
 
 async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Zephyr'):
@@ -289,6 +381,45 @@ async def synthesize_with_gemini_live(text, sample_rate=24000, voice_name='Zephy
         import traceback
         logger.error(traceback.format_exc())
         return None
+
+
+def resample_audio_chunk(audio_chunk, from_rate, to_rate):
+    """
+    Fast per-chunk resampling using linear interpolation.
+    Optimized for low latency streaming.
+
+    Args:
+        audio_chunk: Raw PCM audio bytes (16-bit signed integer, little-endian)
+        from_rate: Source sample rate
+        to_rate: Target sample rate
+
+    Returns:
+        bytes: Resampled PCM audio chunk
+    """
+    if from_rate == to_rate:
+        return audio_chunk
+
+    try:
+        import numpy as np
+
+        # Convert bytes to numpy array
+        audio_array = np.frombuffer(audio_chunk, dtype=np.int16)
+
+        # Calculate resampling ratio
+        ratio = to_rate / from_rate
+        num_samples = int(len(audio_array) * ratio)
+
+        # Fast linear interpolation
+        indices = np.linspace(0, len(audio_array) - 1, num_samples)
+        resampled = np.interp(indices, np.arange(len(audio_array)), audio_array)
+
+        # Convert back to int16 and bytes
+        resampled_int16 = np.int16(resampled)
+        return resampled_int16.tobytes()
+
+    except Exception as e:
+        logger.error(f"Error resampling audio chunk: {e}")
+        return audio_chunk
 
 
 def resample_audio(audio_data, from_rate, to_rate):
