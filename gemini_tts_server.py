@@ -128,17 +128,11 @@ def synthesize_speech():
                 'supportedRates': valid_sample_rates
             }), 400
 
-        # Extract voice preference from request (VAPI sends this in the voice object or message)
-        # VAPI may auto-populate voiceId in the assistant config, so we read it from the request
-        voice_id = None
-        if 'voice' in data:
-            voice_id = data.get('voice', {}).get('voiceId')
-        if not voice_id and 'voiceId' in message:
-            voice_id = message.get('voiceId')
-
-        # Default to Puck if no voiceId specified
-        voice_name = voice_id if voice_id else 'Puck'
-        logger.info(f"Using voice: {voice_name}")
+        # Extract voice preference from URL query parameter (?voice=Puck)
+        # VAPI's custom-voice provider does NOT support voiceId field in assistant config
+        # Voice selection is done via URL parameter instead: /api/synthesize?voice=Puck
+        voice_name = request.args.get('voice', 'Puck')
+        logger.info(f"Using voice from URL param: {voice_name}")
 
         # Authenticate request
         vapi_secret = request.headers.get('X-VAPI-SECRET') or request.headers.get('Authorization', '').replace('Bearer ', '')
