@@ -134,43 +134,31 @@ def synthesize_speech():
             logger.warning("Unauthorized request to /api/synthesize")
             return jsonify({'error': 'Unauthorized'}), 401
 
-        logger.info(f"Synthesizing (STREAMING): '{text[:50]}...', sampleRate={sample_rate}Hz")
+        logger.info(f"Synthesizing (BUFFERED): '{text[:50]}...', sampleRate={sample_rate}Hz")
 
         if not client:
             logger.error("Google API client not initialized")
             return jsonify({'error': 'Google API client not initialized'}), 500
 
-        # Create queue for async->sync communication
-        audio_queue = queue.Queue()
+        # Use buffered Gemini Live API (reverted from streaming due to text generation issue)
+        # TODO: Migrate to dedicated TTS API (gemini-2.5-flash-preview-tts) for proper streaming
+        audio_data = asyncio.run(synthesize_with_gemini_live(text, sample_rate, 'Charon'))
 
-        # Run async streaming in background thread
-        def run_async_streaming():
-            asyncio.run(stream_gemini_live_audio(text, sample_rate, 'Charon', audio_queue))
-
-        thread = threading.Thread(target=run_async_streaming, daemon=True)
-        thread.start()
-
-        # Generator that yields audio chunks as they arrive (enables true streaming)
-        def generate_audio():
-            """Yield audio chunks from queue for real-time streaming to VAPI"""
-            total_bytes = 0
-            while True:
-                chunk = audio_queue.get()
-                if chunk is None:  # Sentinel value for end of stream
-                    logger.info(f"Streaming complete: {total_bytes} bytes total")
-                    break
-                total_bytes += len(chunk)
-                yield chunk
-
-        # Return streaming response with chunked transfer encoding
-        return Response(
-            stream_with_context(generate_audio()),
-            mimetype='application/octet-stream',
-            headers={
-                'Content-Type': 'application/octet-stream',
-                'Transfer-Encoding': 'chunked'
-            }
-        )
+        if audio_data:
+            # Return raw PCM audio
+            response = Response(
+                audio_data,
+                mimetype='application/octet-stream',
+                headers={
+                    'Content-Type': 'application/octet-stream',
+                    'Content-Length': str(len(audio_data))
+                }
+            )
+            logger.info(f"TTS completed: {len(audio_data)} bytes")
+            return response
+        else:
+            logger.error("No audio data generated")
+            return jsonify({'error': 'Failed to synthesize speech'}), 500
 
     except Exception as e:
         logger.error(f"Error synthesizing speech: {e}")
