@@ -30,26 +30,17 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
         "Content-Type": "application/json"
     }
 
-    # Assistant configuration with Google Gemini Live native audio
-    # The voice is handled by realtimeConfig in the model, so we use a dummy voice provider
+    # Assistant configuration with Google Gemini model and custom voice provider
+    # The voice/TTS is handled by the custom TTS server (gemini_tts_server.py)
+    # which internally uses Gemini Live with native audio
     payload = {
         "name": name,
         "model": {
             "provider": "google",
-            "model": "gemini-2.5-flash",
-            # Real-time configuration for Gemini Live with native audio
-            "realtimeConfig": {
-                "speechConfig": {
-                    "voiceConfig": {
-                        "prebuiltVoiceConfig": {
-                            "voiceName": "Charon"  # Options: "Puck", "Charon"
-                        }
-                    }
-                }
-            }
+            "model": "gemini-2.5-flash"
         },
         # Using custom-voice with Gemini Live TTS server
-        # Deploy the gemini_tts_server.py and replace URL below with your server URL
+        # The TTS server handles Gemini Live voice synthesis internally
         "voice": {
             "provider": "custom-voice",
             "server": {
