@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
 """
-Test script for Hebrew streaming TTS with performance measurement
+Test script for dormant customer outreach message
+Testing Hebrew TTS for Laya customer retention scenario
 """
 import requests
 import time
 import wave
 import json
 
-# Long Hebrew text for testing (about 60 words)
+# Customer retention message in Hebrew
 HEBREW_TEXT = """
-שלום! אני לאיה, העוזרת הדיגיטלית שלך המבוססת על בינה מלאכותית.
-אני כאן כדי לעזור לך עם מגוון רחב של משימות ושאלות.
-אני יכולה לספק מידע, לענות על שאלות, לסייע בכתיבה, ולעזור בפתרון בעיות.
-אני משתמשת בטכנולוגיה מתקדמת של סינתזת דיבור כדי להישמע טבעית ונעימה.
-אני מדברת עברית בצורה שוטפת וברורה, ואני מסוגלת להבין ולהגיב למגוון רחב של נושאים.
+היי שלום שמי סתיו מחברת laya, ראיתי שעצרת את תהליך ההרשמה בשלב האימות, האם יש לי דרך לעזור לך עם זה כדי שנוכל להשלים את ההרשמה ותוכל להנות מהשירותים ש-laya מספקת לך?
 """
 
-def test_streaming_performance():
-    """Test streaming TTS with detailed performance metrics"""
+def test_dormant_customer_message():
+    """Test TTS with dormant customer outreach message"""
 
     url = "http://localhost:8000/api/synthesize"
 
@@ -36,10 +33,10 @@ def test_streaming_performance():
     }
 
     print("=" * 70)
-    print("HEBREW STREAMING TTS PERFORMANCE TEST")
+    print("LAYA DORMANT CUSTOMER OUTREACH - TTS TEST")
     print("=" * 70)
     print(f"\nTest Text ({len(HEBREW_TEXT.split())} words):")
-    print(f'"{HEBREW_TEXT.strip()[:100]}..."')
+    print(f'"{HEBREW_TEXT.strip()}"')
     print("\nSending request...")
 
     # Performance tracking
@@ -118,7 +115,7 @@ def test_streaming_performance():
         print(f"📈 Real-time factor:     {total_time_ms / 1000 / duration_seconds:.2f}x")
 
         # Save as WAV
-        output_file = "test_hebrew_streaming_long.wav"
+        output_file = "test_dormant_customer.wav"
         with wave.open(output_file, 'wb') as wav:
             wav.setnchannels(1)
             wav.setsampwidth(2)
@@ -127,6 +124,7 @@ def test_streaming_performance():
 
         print(f"\n💾 Saved to: {output_file}")
         print("=" * 70)
+        print("\n🎧 Play this file to hear how the dormant customer message sounds!")
 
     except requests.exceptions.Timeout:
         print("\n❌ Request timed out (60s)")
@@ -137,4 +135,4 @@ def test_streaming_performance():
 
 
 if __name__ == "__main__":
-    test_streaming_performance()
+    test_dormant_customer_message()

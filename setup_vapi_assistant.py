@@ -53,11 +53,11 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
         },
         # Using custom transcriber with Gemini Live STT server
         # The transcriber uses WebSocket connection for real-time transcription
-        # NOTE: WebSocket server runs on port 8001 (separate from HTTP server on 8000)
+        # NOTE: Using same ngrok URL, WebSocket library will handle the connection
         "transcriber": {
             "provider": "custom-transcriber",
             "server": {
-                "url": "wss://unfriable-audacious-taisha.ngrok-free.dev:8001",
+                "url": "wss://unfriable-audacious-taisha.ngrok-free.dev",
                 "secret": "laya-tts-secret-2025"
             }
         },
