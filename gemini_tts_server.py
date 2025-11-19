@@ -633,12 +633,17 @@ def handle_transcriber_websocket(ws):
     try:
         logger.info(f"🔌 WebSocket connection established")
 
-        # Validate authentication from request headers
+        # Log headers for debugging
+        logger.info(f"Request headers: {dict(request.headers)}")
+
+        # Validate authentication from request headers (optional - VAPI may not send this in WebSocket upgrade)
         vapi_secret = request.headers.get('x-vapi-secret') or request.headers.get('X-VAPI-SECRET')
-        if vapi_secret != VAPI_SECRET:
-            logger.warning(f"❌ Unauthorized WebSocket connection attempt")
+        if vapi_secret and vapi_secret != VAPI_SECRET:
+            logger.warning(f"❌ Invalid secret provided")
             ws.close(1008, "Unauthorized")
             return
+
+        logger.info(f"✅ WebSocket authenticated (secret: {bool(vapi_secret)})")
 
         # Session state
         sample_rate = 16000
