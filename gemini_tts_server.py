@@ -7,7 +7,6 @@ enabling Gemini Live native audio to be used as a custom voice provider in VAPI.
 """
 
 from flask import Flask, request, jsonify, Response, stream_with_context
-from flask_socketio import SocketIO, emit, disconnect
 import requests
 import os
 import json
@@ -22,6 +21,7 @@ from google.genai import types
 from dotenv import load_dotenv
 import struct
 import numpy as np
+import websockets
 
 # Load environment variables from .env file
 load_dotenv()
@@ -33,13 +33,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Initialize SocketIO for WebSocket support (custom transcriber)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
-
 # Configuration from environment variables
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')  # Set your Google API key
 VAPI_SECRET = os.getenv('VAPI_SECRET', 'your-secret-token')  # Secret for VAPI authentication
 PORT = int(os.getenv('PORT', 8000))
+WS_PORT = int(os.getenv('WS_PORT', 8001))  # Separate port for WebSocket transcriber
 
 # Configure Google Generative AI Client
 client = None
@@ -615,104 +613,148 @@ async def transcribe_with_gemini_live(audio_data, sample_rate=16000, language='H
         return None
 
 
-# WebSocket event handlers for custom transcriber
-@socketio.on('connect', namespace='/api/transcribe')
-def handle_transcriber_connect():
-    """Handle WebSocket connection for custom transcriber."""
-    logger.info(f"🔌 Transcriber WebSocket connected: {request.sid}")
+# ============================================================================
+# Native WebSocket Handler for VAPI Custom Transcriber
+# ============================================================================
 
-
-@socketio.on('disconnect', namespace='/api/transcribe')
-def handle_transcriber_disconnect():
-    """Handle WebSocket disconnection."""
-    logger.info(f"🔌 Transcriber WebSocket disconnected: {request.sid}")
-
-
-@socketio.on('message', namespace='/api/transcribe')
-def handle_transcriber_message(data):
+async def handle_transcriber_websocket(websocket, path):
     """
-    Handle incoming messages from VAPI custom transcriber.
+    Handle WebSocket connection for VAPI custom transcriber.
 
-    Expected message formats:
-    1. Start message:
-       {
-           "type": "start",
-           "sampleRate": 16000,
-           "channels": 2
-       }
+    This function implements the VAPI custom transcriber protocol:
+    1. Receives initial start message from VAPI
+    2. Streams audio data from VAPI
+    3. Sends transcription results back to VAPI
 
-    2. Audio data (binary):
-       Raw PCM audio bytes (16-bit signed integer, stereo, little-endian)
+    Args:
+        websocket: WebSocket connection object
+        path: WebSocket path (should be /api/transcribe)
     """
     try:
-        # Check if message is JSON (start message)
-        if isinstance(data, dict):
-            msg_type = data.get('type')
+        logger.info(f"🔌 WebSocket connection established from {websocket.remote_address}")
 
-            if msg_type == 'start':
-                sample_rate = data.get('sampleRate', 16000)
-                channels = data.get('channels', 2)
-                logger.info(f"🎙️ Transcription session started: {sample_rate}Hz, {channels} channels")
+        # Validate authentication from request headers
+        try:
+            vapi_secret = websocket.request_headers.get('x-vapi-secret') or \
+                         websocket.request_headers.get('X-VAPI-SECRET')
+            if vapi_secret != VAPI_SECRET:
+                logger.warning(f"❌ Unauthorized WebSocket connection attempt")
+                await websocket.close(1008, "Unauthorized")
+                return
+        except Exception as e:
+            logger.error(f"Error checking auth: {e}")
+            await websocket.close(1011, "Authentication error")
+            return
 
-                # Store session config in Flask session or global dict
-                # For now, we'll just log it
-                emit('message', {
-                    'type': 'ready',
-                    'status': 'Transcriber ready'
-                })
+        # Session state
+        sample_rate = 16000
+        channels = 2
+        audio_buffer = bytearray()
+        buffer_size_limit = 48000  # ~1.5 seconds at 16kHz (16000 * 2 bytes * 1.5)
 
-            else:
-                logger.warning(f"Unknown message type: {msg_type}")
+        # Process messages from VAPI
+        async for message in websocket:
+            try:
+                # Try parsing as JSON (start message)
+                if isinstance(message, str):
+                    data = json.loads(message)
+                    msg_type = data.get('type')
 
-        # Binary audio data
-        elif isinstance(data, bytes):
-            logger.info(f"🔊 Received audio chunk: {len(data)} bytes")
+                    if msg_type == 'start':
+                        sample_rate = data.get('sampleRate', 16000)
+                        channels = data.get('channels', 2)
+                        encoding = data.get('encoding', 'linear16')
+                        logger.info(f"🎙️ Transcription session started: {sample_rate}Hz, {channels} channels, {encoding}")
 
-            # Extract customer channel (channel 0)
-            mono_audio = extract_audio_channel(data, channel_index=0)
+                        # Send ready acknowledgment (optional)
+                        # await websocket.send(json.dumps({
+                        #     'type': 'ready',
+                        #     'status': 'Transcriber ready'
+                        # }))
+                    else:
+                        logger.warning(f"Unknown message type: {msg_type}")
 
-            # Run transcription in background thread to avoid blocking
-            def transcribe_async():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                transcription = loop.run_until_complete(
-                    transcribe_with_gemini_live(mono_audio, sample_rate=16000, language='Hebrew')
-                )
-                loop.close()
+                # Binary audio data
+                elif isinstance(message, bytes):
+                    logger.info(f"🔊 Received audio chunk: {len(message)} bytes")
 
-                if transcription:
-                    # Send transcription back to VAPI
-                    emit('message', {
-                        'type': 'transcriber-response',
-                        'transcription': transcription,
-                        'channel': 'customer'
-                    })
-                    logger.info(f"📝 Sent transcription: {transcription[:50]}...")
+                    # Buffer audio data
+                    audio_buffer.extend(message)
 
-            # Start transcription in background
-            threading.Thread(target=transcribe_async, daemon=True).start()
+                    # Process buffer when it reaches a certain size
+                    if len(audio_buffer) >= buffer_size_limit:
+                        # Extract customer channel (channel 0) from stereo audio
+                        mono_audio = extract_audio_channel(bytes(audio_buffer), channel_index=0)
 
-        else:
-            logger.warning(f"Unexpected message format: {type(data)}")
+                        # Transcribe the audio
+                        transcription = await transcribe_with_gemini_live(
+                            mono_audio,
+                            sample_rate=sample_rate,
+                            language='Hebrew'
+                        )
 
+                        if transcription:
+                            # Send transcription back to VAPI
+                            response = {
+                                'type': 'transcriber-response',
+                                'transcription': transcription,
+                                'channel': 'customer'
+                            }
+                            await websocket.send(json.dumps(response))
+                            logger.info(f"📝 Sent transcription: {transcription[:50]}...")
+
+                        # Clear buffer
+                        audio_buffer.clear()
+
+            except json.JSONDecodeError:
+                logger.error(f"Failed to decode JSON message")
+            except Exception as e:
+                logger.error(f"Error processing message: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+
+        logger.info(f"🔌 WebSocket connection closed")
+
+    except websockets.exceptions.ConnectionClosed as e:
+        logger.info(f"🔌 WebSocket connection closed: {e}")
     except Exception as e:
-        logger.error(f"Error handling transcriber message: {e}")
+        logger.error(f"❌ Error in WebSocket handler: {e}")
         import traceback
         logger.error(traceback.format_exc())
 
 
+async def start_websocket_server():
+    """Start the WebSocket server for custom transcriber."""
+    logger.info(f"🚀 Starting WebSocket server on port {WS_PORT}")
+    async with websockets.serve(handle_transcriber_websocket, "0.0.0.0", WS_PORT):
+        await asyncio.Future()  # Run forever
+
+
+def run_websocket_server():
+    """Run WebSocket server in a separate thread."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_websocket_server())
+
+
 if __name__ == '__main__':
-    logger.info(f"Starting Gemini Live TTS Server with WebSocket support on port {PORT}")
+    logger.info(f"Starting Gemini Live TTS Server on port {PORT}")
+    logger.info(f"Starting WebSocket Transcriber Server on port {WS_PORT}")
     logger.info("Make sure to set GOOGLE_API_KEY environment variable")
     logger.info("Endpoints:")
-    logger.info("  - HTTP: /api/synthesize (Custom Voice TTS)")
-    logger.info("  - WebSocket: /api/transcribe (Custom Transcriber)")
+    logger.info(f"  - HTTP (TTS):        http://0.0.0.0:{PORT}/api/synthesize")
+    logger.info(f"  - WebSocket (STT):   ws://0.0.0.0:{WS_PORT}/api/transcribe")
 
-    # Run the server with SocketIO support
-    socketio.run(
-        app,
+    # Start WebSocket server in a background thread
+    ws_thread = threading.Thread(target=run_websocket_server, daemon=True)
+    ws_thread.start()
+    logger.info("✅ WebSocket server started in background thread")
+
+    # Run Flask HTTP server in main thread
+    logger.info("✅ Starting Flask HTTP server...")
+    app.run(
         host='0.0.0.0',
         port=PORT,
         debug=False,
-        allow_unsafe_werkzeug=True
+        threaded=True
     )
