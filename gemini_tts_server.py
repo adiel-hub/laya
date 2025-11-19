@@ -7,6 +7,7 @@ enabling Gemini Live native audio to be used as a custom voice provider in VAPI.
 """
 
 from flask import Flask, request, jsonify, Response, stream_with_context
+from flask_socketio import SocketIO, emit, disconnect
 import requests
 import os
 import json
@@ -19,6 +20,8 @@ import threading
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+import struct
+import numpy as np
 
 # Load environment variables from .env file
 load_dotenv()
@@ -29,6 +32,9 @@ logging.basicConfig(level=getattr(logging, log_level))
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Initialize SocketIO for WebSocket support (custom transcriber)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Configuration from environment variables
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')  # Set your Google API key
@@ -304,7 +310,7 @@ async def stream_gemini_live_audio(text, voice_name, audio_queue):
                     }
                 }
             },
-            "system_instruction": ""
+            "system_instruction": "read it correctly without missing or changing any words"
         }
 
         # Connect to Live API and send text
@@ -521,13 +527,192 @@ def list_voices():
     return jsonify({'voices': voices}), 200
 
 
-if __name__ == '__main__':
-    logger.info(f"Starting Gemini Live TTS Server on port {PORT}")
-    logger.info("Make sure to set GOOGLE_API_KEY environment variable")
+# ============================================================================
+# CUSTOM TRANSCRIBER - WebSocket Support for VAPI
+# ============================================================================
 
-    # Run the server
-    app.run(
+def extract_audio_channel(stereo_audio, channel_index):
+    """
+    Extract a single channel from stereo PCM audio.
+
+    Args:
+        stereo_audio: Raw PCM audio bytes (16-bit signed integer, stereo)
+        channel_index: Channel to extract (0 = left/customer, 1 = right/assistant)
+
+    Returns:
+        bytes: Mono PCM audio data for the specified channel
+    """
+    try:
+        # Convert stereo bytes to numpy array
+        audio_array = np.frombuffer(stereo_audio, dtype=np.int16)
+
+        # Extract the specified channel (every other sample starting at channel_index)
+        mono_audio = audio_array[channel_index::2]
+
+        return mono_audio.tobytes()
+
+    except Exception as e:
+        logger.error(f"Error extracting audio channel: {e}")
+        return stereo_audio
+
+
+async def transcribe_with_gemini_live(audio_data, sample_rate=16000, language='Hebrew'):
+    """
+    Transcribe audio using Gemini Live API.
+
+    Args:
+        audio_data: Raw PCM audio bytes (16-bit signed integer, mono)
+        sample_rate: Audio sample rate (default 16000 for VAPI)
+        language: Language hint for transcription
+
+    Returns:
+        str: Transcribed text, or None if transcription fails
+    """
+    try:
+        if not client:
+            logger.error("Google API client not initialized")
+            return None
+
+        # Model with native audio support
+        model = "gemini-2.5-flash-native-audio-preview-09-2025"
+
+        # Configuration for transcription
+        config = {
+            "response_modalities": ["TEXT"],
+            "system_instruction": f"Transcribe the following {language} audio accurately. Only return the transcription, no additional text."
+        }
+
+        # Connect to Live API and send audio
+        async with client.aio.live.connect(model=model, config=config) as session:
+            # Send audio data as input
+            await session.send_client_content(
+                turns=types.Content(
+                    role='user',
+                    parts=[types.Part(inline_data=types.Blob(
+                        mime_type=f'audio/pcm;rate={sample_rate}',
+                        data=audio_data
+                    ))]
+                )
+            )
+
+            # Receive transcription response
+            transcription = ""
+            async for response in session.receive():
+                # Extract text from response
+                if hasattr(response, 'server_content') and response.server_content:
+                    if hasattr(response.server_content, 'model_turn'):
+                        for part in response.server_content.model_turn.parts:
+                            if hasattr(part, 'text'):
+                                transcription += part.text
+
+            logger.info(f"Transcription: {transcription[:100]}")
+            return transcription.strip()
+
+    except Exception as e:
+        logger.error(f"Error transcribing with Gemini Live: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+
+# WebSocket event handlers for custom transcriber
+@socketio.on('connect', namespace='/api/transcribe')
+def handle_transcriber_connect():
+    """Handle WebSocket connection for custom transcriber."""
+    logger.info(f"🔌 Transcriber WebSocket connected: {request.sid}")
+
+
+@socketio.on('disconnect', namespace='/api/transcribe')
+def handle_transcriber_disconnect():
+    """Handle WebSocket disconnection."""
+    logger.info(f"🔌 Transcriber WebSocket disconnected: {request.sid}")
+
+
+@socketio.on('message', namespace='/api/transcribe')
+def handle_transcriber_message(data):
+    """
+    Handle incoming messages from VAPI custom transcriber.
+
+    Expected message formats:
+    1. Start message:
+       {
+           "type": "start",
+           "sampleRate": 16000,
+           "channels": 2
+       }
+
+    2. Audio data (binary):
+       Raw PCM audio bytes (16-bit signed integer, stereo, little-endian)
+    """
+    try:
+        # Check if message is JSON (start message)
+        if isinstance(data, dict):
+            msg_type = data.get('type')
+
+            if msg_type == 'start':
+                sample_rate = data.get('sampleRate', 16000)
+                channels = data.get('channels', 2)
+                logger.info(f"🎙️ Transcription session started: {sample_rate}Hz, {channels} channels")
+
+                # Store session config in Flask session or global dict
+                # For now, we'll just log it
+                emit('message', {
+                    'type': 'ready',
+                    'status': 'Transcriber ready'
+                })
+
+            else:
+                logger.warning(f"Unknown message type: {msg_type}")
+
+        # Binary audio data
+        elif isinstance(data, bytes):
+            logger.info(f"🔊 Received audio chunk: {len(data)} bytes")
+
+            # Extract customer channel (channel 0)
+            mono_audio = extract_audio_channel(data, channel_index=0)
+
+            # Run transcription in background thread to avoid blocking
+            def transcribe_async():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                transcription = loop.run_until_complete(
+                    transcribe_with_gemini_live(mono_audio, sample_rate=16000, language='Hebrew')
+                )
+                loop.close()
+
+                if transcription:
+                    # Send transcription back to VAPI
+                    emit('message', {
+                        'type': 'transcriber-response',
+                        'transcription': transcription,
+                        'channel': 'customer'
+                    })
+                    logger.info(f"📝 Sent transcription: {transcription[:50]}...")
+
+            # Start transcription in background
+            threading.Thread(target=transcribe_async, daemon=True).start()
+
+        else:
+            logger.warning(f"Unexpected message format: {type(data)}")
+
+    except Exception as e:
+        logger.error(f"Error handling transcriber message: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+
+if __name__ == '__main__':
+    logger.info(f"Starting Gemini Live TTS Server with WebSocket support on port {PORT}")
+    logger.info("Make sure to set GOOGLE_API_KEY environment variable")
+    logger.info("Endpoints:")
+    logger.info("  - HTTP: /api/synthesize (Custom Voice TTS)")
+    logger.info("  - WebSocket: /api/transcribe (Custom Transcriber)")
+
+    # Run the server with SocketIO support
+    socketio.run(
+        app,
         host='0.0.0.0',
         port=PORT,
-        debug=False
+        debug=False,
+        allow_unsafe_werkzeug=True
     )

@@ -51,10 +51,14 @@ def create_assistant(name="Laya Assistant", first_message="Hello! How can I help
                 "timeoutSeconds": 30
             }
         },
+        # Using custom transcriber with Gemini Live STT server
+        # The transcriber uses WebSocket connection for real-time transcription
         "transcriber": {
-            "language": "Hebrew",
-            "model": "gemini-2.0-flash",
-            "provider": "google"
+            "provider": "custom-transcriber",
+            "server": {
+                "url": "wss://unfriable-audacious-taisha.ngrok-free.dev/api/transcribe",
+                "secret": "laya-tts-secret-2025"
+            }
         },
         "firstMessage": first_message,
         # Optional: Add more configuration as needed
