@@ -8,6 +8,7 @@ enabling Gemini Live native audio to be used as a custom voice provider in VAPI.
 
 from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_sock import Sock
+from simple_websocket.errors import ConnectionClosed
 import requests
 import os
 import json
@@ -706,6 +707,10 @@ def handle_transcriber_websocket(ws):
                         # Clear buffer
                         audio_buffer.clear()
 
+            except ConnectionClosed as e:
+                # Connection closed gracefully - break the loop
+                logger.info(f"🔌 WebSocket connection closed by client: {e}")
+                break
             except json.JSONDecodeError:
                 logger.error(f"Failed to decode JSON message")
             except Exception as e:
